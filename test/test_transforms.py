@@ -358,51 +358,6 @@ class Tester(unittest.TestCase):
             t = transforms.Resize(osize, antialias=False)
             t(img)
 
-    def test_random_crop(self):
-        height = random.randint(10, 32) * 2
-        width = random.randint(10, 32) * 2
-        oheight = random.randint(5, (height - 2) / 2) * 2
-        owidth = random.randint(5, (width - 2) / 2) * 2
-        img = torch.ones(3, height, width)
-        result = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.RandomCrop((oheight, owidth)),
-            transforms.ToTensor(),
-        ])(img)
-        self.assertEqual(result.size(1), oheight)
-        self.assertEqual(result.size(2), owidth)
-
-        padding = random.randint(1, 20)
-        result = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.RandomCrop((oheight, owidth), padding=padding),
-            transforms.ToTensor(),
-        ])(img)
-        self.assertEqual(result.size(1), oheight)
-        self.assertEqual(result.size(2), owidth)
-
-        result = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.RandomCrop((height, width)),
-            transforms.ToTensor()
-        ])(img)
-        self.assertEqual(result.size(1), height)
-        self.assertEqual(result.size(2), width)
-        torch.testing.assert_close(result, img)
-
-        result = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.RandomCrop((height + 1, width + 1), pad_if_needed=True),
-            transforms.ToTensor(),
-        ])(img)
-        self.assertEqual(result.size(1), height + 1)
-        self.assertEqual(result.size(2), width + 1)
-
-        t = transforms.RandomCrop(48)
-        img = torch.ones(3, 32, 32)
-        with self.assertRaisesRegex(ValueError, r"Required crop size .+ is larger then input image size .+"):
-            t(img)
-
     def test_pad(self):
         height = random.randint(10, 32) * 2
         width = random.randint(10, 32) * 2
@@ -1805,30 +1760,77 @@ class Tester(unittest.TestCase):
                     img = transform(img)
                 transform.__repr__()
 
-    @unittest.skipIf(stats is None, 'scipy.stats not available')
-    def test_random_erasing(self):
-        img = torch.ones(3, 128, 128)
 
-        t = transforms.RandomErasing(scale=(0.1, 0.1), ratio=(1 / 3, 3.))
+def test_random_crop():
+    height = random.randint(10, 32) * 2
+    width = random.randint(10, 32) * 2
+    oheight = random.randint(5, (height - 2) / 2) * 2
+    owidth = random.randint(5, (width - 2) / 2) * 2
+    img = torch.ones(3, height, width)
+    result = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomCrop((oheight, owidth)),
+        transforms.ToTensor(),
+    ])(img)
+    assert result.size(1) == oheight
+    assert result.size(2) == owidth
+
+    padding = random.randint(1, 20)
+    result = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomCrop((oheight, owidth), padding=padding),
+        transforms.ToTensor(),
+    ])(img)
+    assert result.size(1) == oheight
+    assert result.size(2) == owidth
+
+    result = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomCrop((height, width)),
+        transforms.ToTensor()
+    ])(img)
+    assert result.size(1) == height
+    assert result.size(2) == width
+    torch.testing.assert_close(result, img)
+
+    result = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomCrop((height + 1, width + 1), pad_if_needed=True),
+        transforms.ToTensor(),
+    ])(img)
+    assert result.size(1) == height + 1
+    assert result.size(2) == width + 1
+
+    t = transforms.RandomCrop(48)
+    img = torch.ones(3, 32, 32)
+    with pytest.raises(ValueError, match=r"Required crop size .+ is larger then input image size .+"):
+        t(img)
+
+
+@pytest.mark.skipif(stats is None, 'scipy.stats not available')
+def test_random_erasing():
+    img = torch.ones(3, 128, 128)
+
+    t = transforms.RandomErasing(scale=(0.1, 0.1), ratio=(1 / 3, 3.))
+    y, x, h, w, v = t.get_params(img, t.scale, t.ratio, [t.value, ])
+    aspect_ratio = h / w
+    # Add some tolerance due to the rounding and int conversion used in the transform
+    tol = 0.05
+    assert (1 / 3 - tol <= aspect_ratio <= 3 + tol)
+
+    aspect_ratios = []
+    random.seed(42)
+    trial = 1000
+    for _ in range(trial):
         y, x, h, w, v = t.get_params(img, t.scale, t.ratio, [t.value, ])
-        aspect_ratio = h / w
-        # Add some tolerance due to the rounding and int conversion used in the transform
-        tol = 0.05
-        self.assertTrue(1 / 3 - tol <= aspect_ratio <= 3 + tol)
+        aspect_ratios.append(h / w)
 
-        aspect_ratios = []
-        random.seed(42)
-        trial = 1000
-        for _ in range(trial):
-            y, x, h, w, v = t.get_params(img, t.scale, t.ratio, [t.value, ])
-            aspect_ratios.append(h / w)
+    count_bigger_then_ones = len([1 for aspect_ratio in aspect_ratios if aspect_ratio > 1])
+    p_value = stats.binom_test(count_bigger_then_ones, trial, p=0.5)
+    assert p_value > 0.0001
 
-        count_bigger_then_ones = len([1 for aspect_ratio in aspect_ratios if aspect_ratio > 1])
-        p_value = stats.binom_test(count_bigger_then_ones, trial, p=0.5)
-        self.assertGreater(p_value, 0.0001)
-
-        # Checking if RandomErasing can be printed as string
-        t.__repr__()
+    # Checking if RandomErasing can be printed as string
+    t.__repr__()
 
 
 def test_adjust_brightness():
